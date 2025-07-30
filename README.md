@@ -1,4 +1,4 @@
-# SaveXTube - 智能视频下载机器人1
+# SaveXTube - 智能视频下载机器人
 
 SaveXTube 是一个基于 Telegram 的智能视频下载工具，支持 YouTube、X(Twitter) 、X站、P站、B站等主流平台的视频下载，特别针对 NAS 环境进行了优化。
 
