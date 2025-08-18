@@ -9038,33 +9038,27 @@ class TelegramBot:
         base_delay = float(os.getenv("TELEGRAM_BASE_DELAY", "5.0"))
         max_delay = float(os.getenv("TELEGRAM_MAX_DELAY", "300.0"))
 
+        # 启动TG机器人（循环重试）
         retry_count = 0
         while retry_count <= max_retries:
             try:
                 async with self.application:
                     await self.application.initialize()
                     await self.application.start()
-
                     # 配置更强的网络参数
                     await self.application.updater.start_polling(
-                        timeout=30,  # 增加超时时间
-                        read_timeout=30,
-                        write_timeout=30,
-                        connect_timeout=30,
-                        pool_timeout=30
+                        timeout=10,
+                        read_timeout=10,
+                        write_timeout=10,
+                        connect_timeout=10,
+                        pool_timeout=10
                     )
-
-                    logger.info("机器人已成功启动并正在运行。")
-
-                    # 添加定期健康检查和网络监控
+                    logger.info("机器人已成功启动并正在运行...modify_by_yu")
+                    # 启动完成，添加定期健康检查
                     if os.getenv("ENABLE_HEALTH_CHECK", "true").lower() == "true":
                         asyncio.create_task(self._periodic_health_check())
-                        asyncio.create_task(self._network_monitor())
-                        asyncio.create_task(self._keep_alive_heartbeat())
-
                     await asyncio.Event().wait()
                     break  # 成功启动，退出重试循环
-
             except (NetworkError, TimedOut, RetryAfter, httpx.RemoteProtocolError,
                    httpx.ConnectError, httpx.TimeoutException, ConnectionError) as e:
                 retry_count += 1
@@ -9083,44 +9077,25 @@ class TelegramBot:
 
     async def _periodic_health_check(self):
         """定期健康检查，监控网络连接状态并自动恢复"""
-        check_interval = int(os.getenv("HEALTH_CHECK_INTERVAL", "30"))  # 缩短到30秒检查一次
-        max_failures = int(os.getenv("HEALTH_CHECK_MAX_FAILURES", "3"))  # 最大失败次数
+        check_interval = int(os.getenv("HEALTH_CHECK_INTERVAL", "30"))  # 30秒检查一次
         failure_count = 0
         last_success_time = time.time()
-
         while True:
             try:
                 await asyncio.sleep(check_interval)
-
                 # 检查 Telegram API 连接
                 try:
                     await self.application.bot.get_me()
-                    if failure_count > 0:
-                        logger.info(f"🟢 网络连接已恢复！连续失败 {failure_count} 次后恢复正常")
-                    failure_count = 0  # 重置失败计数
                     last_success_time = time.time()
                     logger.debug("🟢 健康检查通过 - Telegram API 连接正常")
-
                 except Exception as e:
-                    failure_count += 1
-                    current_time = time.time()
-                    offline_duration = current_time - last_success_time
-
-                    logger.warning(f"🟡 健康检查失败 ({failure_count}/{max_failures}): {e}")
-                    logger.warning(f"⏱️ 离线时长: {offline_duration:.0f}秒")
-
-                    if failure_count >= max_failures:
-                        logger.error(f"🔴 健康检查连续失败 {max_failures} 次，尝试重启Bot连接")
-
-                        # 尝试重启Bot连接
-                        try:
-                            await self._restart_bot_connection()
-                            logger.info("✅ Bot连接重启成功")
-                            failure_count = 0  # 重置计数器
-                        except Exception as restart_error:
-                            logger.error(f"❌ Bot连接重启失败: {restart_error}")
-                            # 继续监控，不要停止健康检查
-
+                    # 尝试重启Bot连接
+                    try:
+                        await self._restart_bot_connection()
+                        logger.info("✅ Bot连接重启成功")
+                    except Exception as restart_error:
+                        logger.error(f"❌ Bot连接重启失败: {restart_error}")
+                        # 继续监控，不要停止健康检查
             except Exception as e:
                 logger.error(f"❌ 健康检查异常: {e}")
                 await asyncio.sleep(10)  # 异常时短暂等待后继续
@@ -9135,80 +9110,19 @@ class TelegramBot:
                 await self.application.updater.stop()
                 logger.info("📴 已停止当前polling")
 
-            # 等待一段时间
-            await asyncio.sleep(5)
-
             # 重新启动polling
             await self.application.updater.start_polling(
-                timeout=30,
-                read_timeout=30,
-                write_timeout=30,
-                connect_timeout=30,
-                pool_timeout=30
+                timeout=10,
+                read_timeout=10,
+                write_timeout=10,
+                connect_timeout=10,
+                pool_timeout=10
             )
             logger.info("📡 已重新启动polling")
 
         except Exception as e:
             logger.error(f"❌ 重启Bot连接失败: {e}")
             raise e
-
-    async def _network_monitor(self):
-        """网络状态监控，检测长时间的网络中断"""
-        monitor_interval = int(os.getenv("NETWORK_MONITOR_INTERVAL", "120"))  # 2分钟检查一次
-        max_offline_time = int(os.getenv("MAX_OFFLINE_TIME", "600"))  # 最大离线时间10分钟
-
-        last_successful_check = time.time()
-        consecutive_failures = 0
-
-        while True:
-            try:
-                await asyncio.sleep(monitor_interval)
-
-                # 测试网络连接
-                network_ok = await test_network_connectivity()
-                current_time = time.time()
-
-                if network_ok:
-                    if consecutive_failures > 0:
-                        offline_duration = current_time - last_successful_check
-                        logger.info(f"🟢 网络连接已恢复！离线时长: {offline_duration:.0f}秒")
-                    consecutive_failures = 0
-                    last_successful_check = current_time
-                else:
-                    consecutive_failures += 1
-                    offline_duration = current_time - last_successful_check
-
-                    logger.warning(f"🔴 网络监控检测到连接问题 (连续失败 {consecutive_failures} 次)")
-                    logger.warning(f"⏱️ 离线时长: {offline_duration:.0f}秒")
-
-                    # 如果离线时间过长，尝试重启整个应用
-                    if offline_duration > max_offline_time:
-                        logger.error(f"💀 网络离线时间超过 {max_offline_time} 秒，考虑重启应用")
-                        # 这里可以添加重启逻辑，但要谨慎
-
-            except Exception as e:
-                logger.error(f"❌ 网络监控异常: {e}")
-                await asyncio.sleep(30)  # 异常时短暂等待
-
-    async def _keep_alive_heartbeat(self):
-        """保持连接活跃的心跳机制"""
-        heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "300"))  # 5分钟发送一次心跳
-
-        while True:
-            try:
-                await asyncio.sleep(heartbeat_interval)
-
-                # 发送一个轻量级的API调用来保持连接活跃
-                try:
-                    await self.application.bot.get_me()
-                    logger.debug("💓 心跳保持连接活跃")
-                except Exception as e:
-                    logger.warning(f"💔 心跳失败: {e}")
-                    # 心跳失败不需要特殊处理，健康检查会处理
-
-            except Exception as e:
-                logger.error(f"❌ 心跳机制异常: {e}")
-                await asyncio.sleep(60)  # 异常时等待1分钟
 
     async def version_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /version 命令 - 显示版本信息"""
@@ -11258,7 +11172,7 @@ class TelegramBot:
                 message_id=status_message.message_id
             )
 
-    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """记录所有 PTB 抛出的错误并处理网络错误"""
         error = context.error
         error_msg = str(error)
@@ -11419,12 +11333,6 @@ async def main():
     max_delay = float(os.getenv("TELEGRAM_MAX_DELAY", "300.0"))
     logger.info(f"📊 网络重试配置: 最大重试={max_retries}, 基础延迟={base_delay}s, 最大延迟={max_delay}s")
 
-    # 测试网络连接
-    logger.info("🔍 开始网络连接测试...")
-    if not await test_network_connectivity():
-        logger.warning("⚠️ 网络连接测试失败，但将继续尝试启动")
-        # 不要直接退出，继续尝试启动，可能是测试URL的问题
-
     # 检查是否启用健康检查服务器
     enable_health_check = os.getenv("ENABLE_HEALTH_CHECK", "true").lower() == "true"
 
@@ -11518,11 +11426,6 @@ async def main():
     while retry_count < max_retries:
         try:
             logger.info(f"🔄 尝试启动Telegram Bot (第 {retry_count + 1}/{max_retries} 次)")
-
-            # 在重试前测试网络连接
-            if retry_count > 0:
-                logger.info("🔍 重试前测试网络连接...")
-                await test_network_connectivity()
 
             await bot.run()
             logger.info("✅ Telegram Bot启动成功！")
